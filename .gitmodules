@@ -1,0 +1,3 @@
+[submodule "cmrc"]
+	path = cmrc
+	url = https://github.com/vector-of-bool/cmrc

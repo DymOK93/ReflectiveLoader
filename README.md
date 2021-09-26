@@ -1,0 +1,1 @@
+An example of Reflective DLL injection - a technique that allows an attacker to inject a DLL's into a victim process from memory rather than disk

@@ -1,0 +1,8 @@
+# Build system temporary files and directories
+.vs/
+out/
+sys/
+exe/
+
+# CMake devmachine-specific config
+CMakeSettings.json
