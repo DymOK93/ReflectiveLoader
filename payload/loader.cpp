@@ -75,7 +75,7 @@ static const void* LocateImageBase() {
 }
 
 template <class Ty>
-NOINLINE Ty* print_addr(Ty* ptr) {
+static NOINLINE Ty* print_addr(Ty* ptr) {
   __debugbreak();
   return ptr;
 }
@@ -187,112 +187,274 @@ void ResolveImports(void* reloaded_image_base,
                     const IMAGE_NT_HEADERS& nt_header,
                     Kernel32::load_library_t dll_loader,
                     Kernel32::get_proc_addr_t fn_extractor) {
-  auto* image_base_byte_addr{static_cast<std::byte*>(reloaded_image_base)};
-  const auto* import_dir{nt_header.OptionalHeader.DataDirectory +
-                         IMAGE_DIRECTORY_ENTRY_IMPORT};
+  /* auto* image_base_byte_addr{static_cast<std::byte*>(reloaded_image_base)};
+   const auto* import_dir{nt_header.OptionalHeader.DataDirectory +
+                          IMAGE_DIRECTORY_ENTRY_IMPORT};
 
-  const auto* import_descriptor{
-      reinterpret_cast<const IMAGE_IMPORT_DESCRIPTOR*>(
-          image_base_byte_addr + import_dir->VirtualAddress)};
+   const auto* import_descriptor{
+       reinterpret_cast<const IMAGE_IMPORT_DESCRIPTOR*>(
+           image_base_byte_addr + import_dir->VirtualAddress)};
 
-  while (import_descriptor->Name) {
-    const auto* dll_name{reinterpret_cast<const char*>(
-        image_base_byte_addr + import_descriptor->Name)};
-    auto library_addr{reinterpret_cast<std::byte*>(dll_loader(dll_name))};
+   while (import_descriptor->Name) {
+     const auto* dll_name{reinterpret_cast<const char*>(
+         image_base_byte_addr + import_descriptor->Name)};
+     const auto dll_body_addr{
+         reinterpret_cast<std::byte*>(dll_loader(dll_name))};
 
-    auto* orig_first_thunk{reinterpret_cast<const IMAGE_THUNK_DATA*>(
-        image_base_byte_addr + import_descriptor->OriginalFirstThunk)};
-    auto* iat_first_thunk{reinterpret_cast<ULONG_PTR*>(
-        image_base_byte_addr + import_descriptor->OriginalFirstThunk)};
+     auto* orig_first_thunk{reinterpret_cast<const IMAGE_THUNK_DATA*>(
+         image_base_byte_addr + import_descriptor->OriginalFirstThunk)};
+     auto* iat_first_thunk{reinterpret_cast<ULONG_PTR*>(
+         image_base_byte_addr + import_descriptor->FirstThunk)};
 
-    while (*iat_first_thunk) {
-      if (orig_first_thunk->u1.Ordinal & IMAGE_ORDINAL_FLAG) {
-        const auto* raw_export_names{reinterpret_cast<const std::byte*>(
-            nt_header.OptionalHeader.DataDirectory +
-            IMAGE_DIRECTORY_ENTRY_EXPORT)};
+     while (*iat_first_thunk) {
+       const auto* fn_name{reinterpret_cast<const IMAGE_IMPORT_BY_NAME*>(
+           image_base_byte_addr + *iat_first_thunk)};
 
-        const auto* export_dir{reinterpret_cast<const IMAGE_EXPORT_DIRECTORY*>(
-            image_base_byte_addr +
-            reinterpret_cast<const IMAGE_DATA_DIRECTORY*>(raw_export_names)
-                ->VirtualAddress)};
+       if (orig_first_thunk->u1.Ordinal & IMAGE_ORDINAL_FLAG) {
+         const auto* raw_export_names{reinterpret_cast<const std::byte*>(
+             nt_header.OptionalHeader.DataDirectory +
+             IMAGE_DIRECTORY_ENTRY_EXPORT)};
 
-        const auto* functions{image_base_byte_addr +
-                              export_dir->AddressOfFunctions};
+         const auto* export_dir{reinterpret_cast<const IMAGE_EXPORT_DIRECTORY*>(
+             image_base_byte_addr +
+             reinterpret_cast<const IMAGE_DATA_DIRECTORY*>(raw_export_names)
+                 ->VirtualAddress)};
 
-        const auto* entry_ptr{reinterpret_cast<const DWORD*>(
-            functions + IMAGE_ORDINAL(orig_first_thunk->u1.Ordinal) -
-            export_dir->Base * sizeof(DWORD))};
+         const auto* functions{image_base_byte_addr +
+                               export_dir->AddressOfFunctions};
 
-        *iat_first_thunk =
-            reinterpret_cast<ULONG_PTR>(library_addr + *entry_ptr);
+         const auto* entry_ptr{reinterpret_cast<const DWORD*>(
+             functions +
+             (IMAGE_ORDINAL(orig_first_thunk->u1.Ordinal) - export_dir->Base) *
+                 sizeof(DWORD))};
+
+         *iat_first_thunk =
+             reinterpret_cast<ULONG_PTR>(dll_body_addr + *entry_ptr);
+       } else {
+         const auto* import_name{reinterpret_cast<const IMAGE_IMPORT_BY_NAME*>(
+             image_base_byte_addr + *iat_first_thunk)};
+         *iat_first_thunk = reinterpret_cast<ULONG_PTR>(fn_extractor(
+             reinterpret_cast<HMODULE>(dll_body_addr), import_name->Name));
+       }
+       ++iat_first_thunk;
+
+       auto* raw_orig_next_thunk{
+           reinterpret_cast<const std::byte*>(orig_first_thunk) +
+           sizeof(ULONG_PTR)};
+       orig_first_thunk =
+           reinterpret_cast<const IMAGE_THUNK_DATA*>(raw_orig_next_thunk);
+     }
+     ++import_descriptor;
+   }*/
+
+#define DEREF(v) *(ULONG_PTR*)(v)
+#define DEREF_32(v) *(DWORD*)(v)
+
+  auto uiBaseAddress = (ULONG_PTR)reloaded_image_base;
+  auto uiHeaderValue = (ULONG_PTR)&nt_header;
+  auto uiLibraryAddress =
+      uiBaseAddress -
+      ((PIMAGE_NT_HEADERS)uiHeaderValue)->OptionalHeader.ImageBase;
+
+  ULONG_PTR uiValueA, uiValueB, uiValueC, uiValueD, uiNameArray, uiExportDir,
+      uiAddressArray;
+
+  uiValueB = (ULONG_PTR) &
+             ((PIMAGE_NT_HEADERS)uiHeaderValue)
+                 ->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+
+  // we assume their is an import table to process
+  // uiValueC is the first entry in the import table
+  uiValueC =
+      (uiBaseAddress + ((PIMAGE_DATA_DIRECTORY)uiValueB)->VirtualAddress);
+
+  // itterate through all imports
+  while (((PIMAGE_IMPORT_DESCRIPTOR)uiValueC)->Name) {
+    // use LoadLibraryA to load the imported module into memory
+    uiLibraryAddress = (ULONG_PTR)dll_loader(
+        (LPCSTR)(uiBaseAddress + ((PIMAGE_IMPORT_DESCRIPTOR)uiValueC)->Name));
+
+    // uiValueD = VA of the OriginalFirstThunk
+    uiValueD = (uiBaseAddress +
+                ((PIMAGE_IMPORT_DESCRIPTOR)uiValueC)->OriginalFirstThunk);
+
+    // uiValueA = VA of the IAT (via first thunk not origionalfirstthunk)
+    uiValueA =
+        (uiBaseAddress + ((PIMAGE_IMPORT_DESCRIPTOR)uiValueC)->FirstThunk);
+
+    // itterate through all imported functions, importing by ordinal if no name
+    // present
+    while (DEREF(uiValueA)) {
+      // sanity check uiValueD as some compilers only import by FirstThunk
+      if (uiValueD &&
+          ((PIMAGE_THUNK_DATA)uiValueD)->u1.Ordinal & IMAGE_ORDINAL_FLAG) {
+        // get the VA of the modules NT Header
+        uiExportDir =
+            uiLibraryAddress + ((PIMAGE_DOS_HEADER)uiLibraryAddress)->e_lfanew;
+
+        // uiNameArray = the address of the modules export directory entry
+        uiNameArray =
+            (ULONG_PTR) &
+            ((PIMAGE_NT_HEADERS)uiExportDir)
+                ->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
+
+        // get the VA of the export directory
+        uiExportDir = (uiLibraryAddress +
+                       ((PIMAGE_DATA_DIRECTORY)uiNameArray)->VirtualAddress);
+
+        // get the VA for the array of addresses
+        uiAddressArray =
+            (uiLibraryAddress +
+             ((PIMAGE_EXPORT_DIRECTORY)uiExportDir)->AddressOfFunctions);
+
+        // use the import ordinal (- export ordinal base) as an index into the
+        // array of addresses
+        uiAddressArray +=
+            ((IMAGE_ORDINAL(((PIMAGE_THUNK_DATA)uiValueD)->u1.Ordinal) -
+              ((PIMAGE_EXPORT_DIRECTORY)uiExportDir)->Base) *
+             sizeof(DWORD));
+
+        // patch in the address for this imported function
+        DEREF(uiValueA) = (uiLibraryAddress + DEREF_32(uiAddressArray));
       } else {
-        const auto* import_name{reinterpret_cast<const IMAGE_IMPORT_BY_NAME*>(
-            image_base_byte_addr + *iat_first_thunk)};
-        *iat_first_thunk = reinterpret_cast<ULONG_PTR>(fn_extractor(
-            reinterpret_cast<HMODULE>(library_addr), import_name->Name));
-      }
-      ++iat_first_thunk;
+        // get the VA of this functions import by name struct
+        uiValueB = (uiBaseAddress + DEREF(uiValueA));
 
-      auto* raw_orig_next_thunk{
-          reinterpret_cast<const std::byte*>(orig_first_thunk) +
-          sizeof(ULONG_PTR)};
-      orig_first_thunk =
-          reinterpret_cast<const IMAGE_THUNK_DATA*>(raw_orig_next_thunk);
+        // use GetProcAddress and patch in the address for this imported
+        // function
+        DEREF(uiValueA) = (ULONG_PTR)fn_extractor(
+            (HMODULE)uiLibraryAddress,
+            (LPCSTR)((PIMAGE_IMPORT_BY_NAME)uiValueB)->Name);
+      }
+      // get the next imported function
+      uiValueA += sizeof(ULONG_PTR);
+      if (uiValueD)
+        uiValueD += sizeof(ULONG_PTR);
     }
-    ++import_descriptor;
+
+    // get the next import
+    uiValueC += sizeof(IMAGE_IMPORT_DESCRIPTOR);
   }
 }
 
 void RelocateIfNeeded(void* reloaded_image_base,
                       const IMAGE_NT_HEADERS& nt_header) {
-  auto* image_base_byte_addr{static_cast<std::byte*>(reloaded_image_base)};
-  const auto relocation_delta{
-      image_base_byte_addr -
-      reinterpret_cast<const std::byte*>(nt_header.OptionalHeader.ImageBase)};
+  // auto* image_base_byte_addr{static_cast<std::byte*>(reloaded_image_base)};
+  // const auto relocation_delta{
+  //    image_base_byte_addr -
+  //    reinterpret_cast<const std::byte*>(nt_header.OptionalHeader.ImageBase)};
 
-  if (const auto* relocation_data_dir = nt_header.OptionalHeader.DataDirectory +
-                                        IMAGE_DIRECTORY_ENTRY_BASERELOC;
-      relocation_data_dir->Size > 0) {
-    const auto* relocation_block{reinterpret_cast<const IMAGE_BASE_RELOCATION*>(
-        image_base_byte_addr + relocation_data_dir->VirtualAddress)};
+  // if (const auto* relocation_data_dir =
+  // nt_header.OptionalHeader.DataDirectory +
+  //                                      IMAGE_DIRECTORY_ENTRY_BASERELOC;
+  //    relocation_data_dir->Size > 0) {
+  //  const auto* relocation_block{reinterpret_cast<const
+  //  IMAGE_BASE_RELOCATION*>(
+  //      image_base_byte_addr + relocation_data_dir->VirtualAddress)};
 
-    while (relocation_block->SizeOfBlock) {
-      auto* relocation_target{image_base_byte_addr +
-                              relocation_block->VirtualAddress};
+  //  while (relocation_block->SizeOfBlock) {
+  //    auto* relocation_target{image_base_byte_addr +
+  //                            relocation_block->VirtualAddress};
 
-      size_t entry_count{relocation_block->SizeOfBlock -
-                         sizeof(IMAGE_BASE_RELOCATION) / sizeof(IMAGE_RELOC)};
+  //    size_t entry_count{relocation_block->SizeOfBlock -
+  //                       sizeof(IMAGE_BASE_RELOCATION) / sizeof(IMAGE_RELOC)};
 
-      const auto* raw_relocation_block{
-          reinterpret_cast<const std::byte*>(relocation_block)};
-      const auto* relocation_entry{reinterpret_cast<const IMAGE_RELOC*>(
-          raw_relocation_block + sizeof(IMAGE_BASE_RELOCATION))};
+  //    const auto* raw_relocation_block{
+  //        reinterpret_cast<const std::byte*>(relocation_block)};
+  //    const auto* relocation_entry{reinterpret_cast<const IMAGE_RELOC*>(
+  //        raw_relocation_block + sizeof(IMAGE_BASE_RELOCATION))};
 
-      while (entry_count--) {
-        if (relocation_entry->type == IMAGE_REL_BASED_DIR64) {
-          auto* cell{reinterpret_cast<ULONG_PTR*>(relocation_target +
-                                                  relocation_entry->offset)};
-          *cell += relocation_delta;
-        } else if (relocation_entry->type == IMAGE_REL_BASED_HIGHLOW) {
-          auto* cell{reinterpret_cast<DWORD*>(relocation_target +
-                                              relocation_entry->offset)};
-          *cell += static_cast<DWORD>(relocation_delta);
+  //    while (entry_count--) {
+  //      if (relocation_entry->type == IMAGE_REL_BASED_DIR64) {
+  //        auto* cell{reinterpret_cast<ULONG_PTR*>(relocation_target +
+  //                                                relocation_entry->offset)};
+  //        *cell += relocation_delta;
+  //      } else if (relocation_entry->type == IMAGE_REL_BASED_HIGHLOW) {
+  //        auto* cell{reinterpret_cast<DWORD*>(relocation_target +
+  //                                            relocation_entry->offset)};
+  //        *cell += static_cast<DWORD>(relocation_delta);
 
-        } else if (relocation_entry->type == IMAGE_REL_BASED_HIGH) {
-          auto* cell{reinterpret_cast<WORD*>(relocation_target +
-                                             relocation_entry->offset)};
-          *cell += HIWORD(relocation_delta);
-        } else if (relocation_entry->type == IMAGE_REL_BASED_LOW) {
-          auto* cell{reinterpret_cast<WORD*>(relocation_target +
-                                             relocation_entry->offset)};
-          *cell += LOWORD(relocation_delta);
-        }
-        ++relocation_entry;
+  //      } else if (relocation_entry->type == IMAGE_REL_BASED_HIGH) {
+  //        auto* cell{reinterpret_cast<WORD*>(relocation_target +
+  //                                           relocation_entry->offset)};
+  //        *cell += HIWORD(relocation_delta);
+  //      } else if (relocation_entry->type == IMAGE_REL_BASED_LOW) {
+  //        auto* cell{reinterpret_cast<WORD*>(relocation_target +
+  //                                           relocation_entry->offset)};
+  //        *cell += LOWORD(relocation_delta);
+  //      }
+  //      ++relocation_entry;
+  //    }
+
+  //    raw_relocation_block += relocation_block->SizeOfBlock;
+  //    relocation_block =
+  //        reinterpret_cast<const
+  //        IMAGE_BASE_RELOCATION*>(raw_relocation_block);
+  //  }
+  //}
+
+  auto uiBaseAddress = (ULONG_PTR)reloaded_image_base;
+  auto uiHeaderValue = (ULONG_PTR)&nt_header;
+  auto uiLibraryAddress =
+      uiBaseAddress -
+      ((PIMAGE_NT_HEADERS)uiHeaderValue)->OptionalHeader.ImageBase;
+
+  ULONG_PTR uiValueA, uiValueB, uiValueC, uiValueD;
+
+  // uiValueB = the address of the relocation directory
+  uiValueB =
+      (ULONG_PTR) &
+      ((PIMAGE_NT_HEADERS)uiHeaderValue)
+          ->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC];
+
+    print_addr((void*)uiBaseAddress);
+    print_addr((void*)((PIMAGE_NT_HEADERS)uiHeaderValue)->OptionalHeader.ImageBase);
+    print_addr((void*)((PIMAGE_DATA_DIRECTORY)uiValueB)->Size);
+
+  // check if their are any relocations present
+  if (((PIMAGE_DATA_DIRECTORY)uiValueB)->Size) {
+    // uiValueC is now the first entry (IMAGE_BASE_RELOCATION)
+    uiValueC =
+        (uiBaseAddress + ((PIMAGE_DATA_DIRECTORY)uiValueB)->VirtualAddress);
+
+    // and we itterate through all entries...
+    while (((PIMAGE_BASE_RELOCATION)uiValueC)->SizeOfBlock) {
+      // uiValueA = the VA for this relocation block
+      uiValueA =
+          (uiBaseAddress + ((PIMAGE_BASE_RELOCATION)uiValueC)->VirtualAddress);
+
+      // uiValueB = number of entries in this relocation block
+      uiValueB = (((PIMAGE_BASE_RELOCATION)uiValueC)->SizeOfBlock -
+                  sizeof(IMAGE_BASE_RELOCATION)) /
+                 sizeof(IMAGE_RELOC);
+
+      // uiValueD is now the first entry in the current relocation block
+      uiValueD = uiValueC + sizeof(IMAGE_BASE_RELOCATION);
+
+      // we itterate through all the entries in the current block...
+      while (uiValueB--) {
+        // perform the relocation, skipping IMAGE_REL_BASED_ABSOLUTE as
+        // required. we dont use a switch statement to avoid the compiler
+        // building a jump table which would not be very position independent!
+        if (((PIMAGE_RELOC)uiValueD)->type == IMAGE_REL_BASED_DIR64)
+          *(ULONG_PTR*)(uiValueA + ((PIMAGE_RELOC)uiValueD)->offset) +=
+              uiLibraryAddress;
+        else if (((PIMAGE_RELOC)uiValueD)->type == IMAGE_REL_BASED_HIGHLOW)
+          *(DWORD*)(uiValueA + ((PIMAGE_RELOC)uiValueD)->offset) +=
+              (DWORD)uiLibraryAddress;
+        else if (((PIMAGE_RELOC)uiValueD)->type == IMAGE_REL_BASED_HIGH)
+          *(WORD*)(uiValueA + ((PIMAGE_RELOC)uiValueD)->offset) +=
+              HIWORD(uiLibraryAddress);
+        else if (((PIMAGE_RELOC)uiValueD)->type == IMAGE_REL_BASED_LOW)
+          *(WORD*)(uiValueA + ((PIMAGE_RELOC)uiValueD)->offset) +=
+              LOWORD(uiLibraryAddress);
+
+        // get the next entry in the current relocation block
+        uiValueD += sizeof(IMAGE_RELOC);
       }
 
-      raw_relocation_block += relocation_block->SizeOfBlock;
-      relocation_block =
-          reinterpret_cast<const IMAGE_BASE_RELOCATION*>(raw_relocation_block);
+      // get the next entry in the relocation directory
+      uiValueC = uiValueC + ((PIMAGE_BASE_RELOCATION)uiValueC)->SizeOfBlock;
     }
   }
 }
@@ -301,7 +463,7 @@ void RelocateIfNeeded(void* reloaded_image_base,
 DLLEXPORT DWORD WINAPI ReflectiveLoader(void* parameter) {
   const auto* image_base{details::LocateImageBase()};
 
-  const PPEB peb{details::GetProcessEnvironmentBlock()};
+  PPEB peb{details::GetProcessEnvironmentBlock()};
 
   const auto [kernel32, ntdll]{details::GetBasicFunctionSet(peb)};
 
@@ -311,14 +473,19 @@ DLLEXPORT DWORD WINAPI ReflectiveLoader(void* parameter) {
                              MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE)};
   details::ReloadImage(new_base, image_base, *nt_header);
 
-  // details::ResolveImports(new_base, *nt_header, kernel32.load_library,
-  //                        kernel32.get_proc_addr);
-  // details::RelocateIfNeeded(new_base, *nt_header);
+  details::ResolveImports(new_base, *nt_header, kernel32.load_library,
+                          kernel32.get_proc_addr);
+  details::RelocateIfNeeded(new_base, *nt_header);
 
-  // const auto process_handle{reinterpret_cast<HANDLE>(-1)};
-  // ntdll.flush_icache(process_handle, nullptr, 0);
+  const auto entry_point{reinterpret_cast<entry_point_t>(
+      static_cast<std::byte*>(new_base) +
+      nt_header->OptionalHeader.AddressOfEntryPoint)};
 
-  // return DllMain(static_cast<HINSTANCE>(parameter), DLL_PROCESS_ATTACH,
-  //               nullptr);
-  return 0;
+  const auto process_handle{reinterpret_cast<HANDLE>(-1)};
+  ntdll.flush_icache(process_handle, nullptr, 0);
+
+  details::print_addr(entry_point);
+
+  return entry_point(static_cast<HINSTANCE>(parameter), DLL_PROCESS_ATTACH,
+                     nullptr);
 }

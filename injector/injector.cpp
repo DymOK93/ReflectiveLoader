@@ -15,16 +15,10 @@ using namespace std;
 
 CMRC_DECLARE(dll_payload);
 
-template <size_t N>
-UNICODE_STRING ToUnicodeString(const wchar_t(& str)[N]) {
-  return {(N - 1) * sizeof(wchar_t), N * sizeof(wchar_t),
-          const_cast<wchar_t*>(str)};
-}
-
 int main(int argc, char* argv[]) {
   if (argc < 2) {
     cout << "Usage: ReflectiveInjector <process_id>\n";
-    return EXIT_FAILURE;
+    // return EXIT_FAILURE;
   }
   try {
     const auto resource_fs{cmrc::dll_payload::get_filesystem()};
@@ -52,6 +46,7 @@ int main(int argc, char* argv[]) {
     cout << "Unhandled exception caught: " << exc.what() << endl;
     return EXIT_FAILURE;
   }
+  system("pause");
   return EXIT_SUCCESS;
 }
 

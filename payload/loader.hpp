@@ -26,4 +26,5 @@ struct BasicFunctionSet {
 
 DLLEXPORT DWORD WINAPI ReflectiveLoader(void* parameter) ;
 
-BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, void* reserved) ;
+DLLEXPORT BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, void* reserved);
+using entry_point_t = std::add_pointer_t<decltype(DllMain)>;
