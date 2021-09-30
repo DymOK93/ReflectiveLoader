@@ -15,10 +15,16 @@ using namespace std;
 
 CMRC_DECLARE(dll_payload);
 
+template <size_t N>
+UNICODE_STRING ToUnicodeString(const wchar_t(& str)[N]) {
+  return {(N - 1) * sizeof(wchar_t), N * sizeof(wchar_t),
+          const_cast<wchar_t*>(str)};
+}
+
 int main(int argc, char* argv[]) {
   if (argc < 2) {
     cout << "Usage: ReflectiveInjector <process_id>\n";
-    // return EXIT_FAILURE;
+    return EXIT_FAILURE;
   }
   try {
     const auto resource_fs{cmrc::dll_payload::get_filesystem()};
@@ -106,13 +112,13 @@ optional<int32_t> TryFindExportedEntry(const void* image_base,
     return nullopt;
   }
 
-  const auto* raw_export_names{reinterpret_cast<const std::byte*>(
+  const auto* raw_exports{reinterpret_cast<const std::byte*>(
       nt_header->OptionalHeader.DataDirectory + IMAGE_DIRECTORY_ENTRY_EXPORT)};
 
   const auto* export_dir{reinterpret_cast<const IMAGE_EXPORT_DIRECTORY*>(
       image_base_byte_addr +
       details::ConvertRvaToOffset(
-          reinterpret_cast<const IMAGE_DATA_DIRECTORY*>(raw_export_names)
+          reinterpret_cast<const IMAGE_DATA_DIRECTORY*>(raw_exports)
               ->VirtualAddress,
           image_base))};
 
@@ -125,6 +131,10 @@ optional<int32_t> TryFindExportedEntry(const void* image_base,
       details::ConvertRvaToOffset(export_dir->AddressOfNameOrdinals,
                                   image_base))};
 
+  const auto* functions{
+      image_base_byte_addr +
+      details::ConvertRvaToOffset(export_dir->AddressOfFunctions, image_base)};
+
   for (size_t idx = 0; idx < export_dir->NumberOfNames;
        ++idx, ++export_names, ++name_ordinals) {
     const auto* raw_exported_name{
@@ -134,9 +144,6 @@ optional<int32_t> TryFindExportedEntry(const void* image_base,
     if (const string_view exported_name_view =
             reinterpret_cast<const char*>(raw_exported_name);
         exported_name_view.find(entry_name) != string_view::npos) {
-      const auto* functions{image_base_byte_addr +
-                            details::ConvertRvaToOffset(
-                                export_dir->AddressOfFunctions, image_base)};
       const auto* ordinals_low_part{
           reinterpret_cast<const WORD*>(name_ordinals)};
       const auto* entry_ptr{reinterpret_cast<const DWORD*>(

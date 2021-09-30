@@ -5,19 +5,25 @@
 #include <cstdint>
 
 namespace hash {
-inline constexpr uint32_t KERNEL32_DLL{0x6A4ABC5B};
-inline constexpr uint32_t NTDLL_DLL{0x3CFA685D};
+inline constexpr size_t KERNEL32_DLL    {0xA2e88830c762342a};
+inline constexpr size_t NTDLL_DLL       {0x82f80830ba02602c};
 
-inline constexpr uint32_t LOAD_LIBRARY{0xE82F3D05};
-inline constexpr uint32_t GET_PROC_ADDRESS{0x3C68C78D};
-inline constexpr uint32_t VIRTUAL_ALLOC{0x86BC30D7};
-inline constexpr uint32_t NT_FLUSH_ICACHE{0x49424A60};
+inline constexpr size_t LOAD_LIBRARY    {0xa9db4996f60be122};
+inline constexpr size_t GET_PROC_ADDRESS{0x4b2197bfd5be9ce6};
+inline constexpr size_t VIRTUAL_ALLOC   {0xa6ddc5a6ac02dad2};
+inline constexpr size_t NT_FLUSH_ICACHE {0xb4a38ae3a399c7b2};
 
-inline constexpr uint32_t KEY{13};
+inline constexpr size_t KEY{13};
 
 namespace details {
-uint32_t rotr(uint32_t value, _In_ int32_t shift) noexcept {
+inline size_t rotr(size_t value, int32_t shift) noexcept {
+#ifdef _M_AMD64
+  return _rotr64(value, shift);
+#elif defined _M_IX86
   return _rotr(value, shift);
+#else
+#error Unsupported architecture
+#endif
 }
 }  // namespace details
 
@@ -29,20 +35,12 @@ struct Hash;
 
 template <>
 struct Hash<const char*> {
-  uint32_t operator()(const char* str) const noexcept {
-    uint32_t result{0};
+  size_t operator()(const char* str) const noexcept {
+    constexpr size_t factor{53};
+    size_t result{0}, pow{1};
     for (size_t idx = 0; str[idx] != 0; ++idx) {
-      result = hash::details::rotr(result, hash::KEY);
-      result += *str;
-    }
-    return result;
-  }
-
-  uint32_t operator()(const char* str, size_t length) const noexcept {
-    uint32_t result{0};
-    for (size_t idx = 0; idx < length; ++idx) {
-      result = hash::details::rotr(result, hash::KEY);
-      result += *str;
+      result += (static_cast<size_t>(str[idx]) - 'a' + 1) * pow;
+      pow *= factor;
     }
     return result;
   }
@@ -50,19 +48,14 @@ struct Hash<const char*> {
 
 template <>
 struct Hash<UNICODE_STRING> {
-  uint32_t operator()(const UNICODE_STRING& str) const noexcept {
-    const auto* as_chars{reinterpret_cast<const char*>(str.Buffer)};
-    return Hash<const char*>{}(as_chars, str.Length);
-  }
-
-  uint32_t operator()(const UNICODE_STRING& str,
+  size_t operator()(const UNICODE_STRING& str,
                       hash::case_insensitive_tag) const noexcept {
-    uint32_t result{0};
+    size_t result{0};
     const auto* as_chars{reinterpret_cast<const char*>(str.Buffer)};
     for (size_t idx = 0; idx < str.Length; ++idx) {
       result = hash::details::rotr(result, hash::KEY);
       if (const auto ch = as_chars[idx]; ch >= 'a') {
-        result += ch - 0x20;
+        result += static_cast<size_t>(ch) - 0x20;
       } else {
         result += ch;
       }

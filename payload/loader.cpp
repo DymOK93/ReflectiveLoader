@@ -52,9 +52,8 @@ static PPEB GetProcessEnvironmentBlock() {
 }
 
 static const void* LocateImageBase() {
-  const auto* current_addr{static_cast<const std::byte*>(GetCaller())};
-
-  for (;;) {
+  for (const auto* current_addr = static_cast<const std::byte*>(GetCaller());
+       ;) {
     if (const auto* as_dos_header =
             reinterpret_cast<const IMAGE_DOS_HEADER*>(current_addr);
         as_dos_header->e_magic == IMAGE_DOS_SIGNATURE) {
@@ -82,17 +81,15 @@ NOINLINE Ty* print_addr(Ty* ptr) {
 }
 
 template <class FnPtrTy>
-FnPtrTy LoadProcAddressByHash(const void* image_base, uint32_t fn_hash) {
+FnPtrTy LoadProcAddressByHash(const void* image_base, size_t fn_hash) {
   const auto* image_base_byte_addr{static_cast<const std::byte*>(image_base)};
   const auto* nt_header{GetNtHeader(image_base)};
 
-  const auto* raw_export_names{reinterpret_cast<const std::byte*>(
-      nt_header->OptionalHeader.DataDirectory + IMAGE_DIRECTORY_ENTRY_EXPORT)};
+  const auto* raw_exports{nt_header->OptionalHeader.DataDirectory +
+                          IMAGE_DIRECTORY_ENTRY_EXPORT};
 
   const auto* export_dir{reinterpret_cast<const IMAGE_EXPORT_DIRECTORY*>(
-      image_base_byte_addr +
-      reinterpret_cast<const IMAGE_DATA_DIRECTORY*>(raw_export_names)
-          ->VirtualAddress)};
+      image_base_byte_addr + raw_exports->VirtualAddress)};
 
   const auto* export_names{reinterpret_cast<const DWORD*>(
       image_base_byte_addr + export_dir->AddressOfNames)};
@@ -100,24 +97,29 @@ FnPtrTy LoadProcAddressByHash(const void* image_base, uint32_t fn_hash) {
   const auto* name_ordinals{reinterpret_cast<const DWORD*>(
       image_base_byte_addr + export_dir->AddressOfNameOrdinals)};
 
-  constexpr auto hash_comparator{[](const char* target, uint32_t expected) {
-    const uint32_t result{Hash<const char*>{}(target)};
+  const auto* functions{image_base_byte_addr + export_dir->AddressOfFunctions};
+
+  constexpr auto hash_comparator{[](const char* target, size_t expected) {
+    const size_t result{Hash<const char*>{}(target)};
     return result == expected;
   }};
+
+  print_addr(image_base_byte_addr);
 
   for (size_t idx = 0; idx < export_dir->NumberOfNames;
        ++idx, ++export_names, ++name_ordinals) {
     const auto* raw_exported_name{image_base_byte_addr + *export_names};
 
-    if (const auto* exported_name_view =
+    if (const auto* exported_name =
             reinterpret_cast<const char*>(raw_exported_name);
-        hash_comparator(exported_name_view, fn_hash)) {
-      const auto* functions{image_base_byte_addr +
-                            export_dir->AddressOfFunctions};
+        hash_comparator(exported_name, fn_hash)) {
       const auto* ordinals_low_part{
           reinterpret_cast<const WORD*>(name_ordinals)};
       const auto* entry_ptr{reinterpret_cast<const DWORD*>(
           functions + *ordinals_low_part * sizeof(DWORD))};
+
+      print_addr(exported_name);
+      print_addr((void*)*ordinals_low_part);
 
       return reinterpret_cast<FnPtrTy>(image_base_byte_addr + *entry_ptr);
     }
@@ -136,8 +138,8 @@ BasicFunctionSet GetBasicFunctionSet(PPEB peb) {
     const auto* dynamic_library{CONTAINING_RECORD(entry, LDR_DATA_TABLE_ENTRY,
                                                   InMemoryOrderModuleList)};
     constexpr auto hash_comparator{
-        [](const UNICODE_STRING& target, uint32_t expected) {
-          const uint32_t result{
+        [](const UNICODE_STRING& target, size_t expected) {
+          const size_t result{
               Hash<UNICODE_STRING>{}(target, hash::case_insensitive_tag{})};
           return result == expected;
         }};
@@ -165,6 +167,7 @@ void ReloadImage(void* new_base,
                  const void* image_base,
                  const IMAGE_NT_HEADERS& nt_header) {
   const auto* image_base_byte_addr{static_cast<const std::byte*>(image_base)};
+  print_addr(new_base);
 
   const auto& optional_header{nt_header.OptionalHeader};
   CopyMem(new_base, image_base, optional_header.SizeOfHeaders);
@@ -173,6 +176,8 @@ void ReloadImage(void* new_base,
   const auto* section_entry{
       reinterpret_cast<const IMAGE_SECTION_HEADER*>(&optional_header) +
       file_header.SizeOfOptionalHeader};
+
+  __debugbreak();
 
   for (size_t idx = 0; idx < file_header.NumberOfSections;
        ++idx, ++section_entry) {
@@ -307,10 +312,10 @@ DLLEXPORT DWORD WINAPI ReflectiveLoader(void* parameter) {
   const auto [kernel32, ntdll]{details::GetBasicFunctionSet(peb)};
 
   const auto* nt_header{details::GetNtHeader(image_base)};
+  __debugbreak();
   void* new_base{
       kernel32.virtual_alloc(nullptr, nt_header->OptionalHeader.SizeOfImage,
-                             MEM_RESERVE | MEM_COMMIT,
-  PAGE_EXECUTE_READWRITE)};
+                             MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE)};
   details::ReloadImage(new_base, image_base, *nt_header);
   // details::ResolveImports(new_base, *nt_header, kernel32.load_library,
   //                        kernel32.get_proc_addr);
