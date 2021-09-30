@@ -94,7 +94,7 @@ FnPtrTy LoadProcAddressByHash(const void* image_base, size_t fn_hash) {
   const auto* export_names{reinterpret_cast<const DWORD*>(
       image_base_byte_addr + export_dir->AddressOfNames)};
 
-  const auto* name_ordinals{reinterpret_cast<const DWORD*>(
+  const auto* name_ordinals{reinterpret_cast<const WORD*>(
       image_base_byte_addr + export_dir->AddressOfNameOrdinals)};
 
   const auto* functions{image_base_byte_addr + export_dir->AddressOfFunctions};
@@ -104,25 +104,20 @@ FnPtrTy LoadProcAddressByHash(const void* image_base, size_t fn_hash) {
     return result == expected;
   }};
 
-  print_addr(image_base_byte_addr);
-
-  for (size_t idx = 0; idx < export_dir->NumberOfNames;
-       ++idx, ++export_names, ++name_ordinals) {
+  for (size_t idx = 0; idx < export_dir->NumberOfNames; ++idx) {
     const auto* raw_exported_name{image_base_byte_addr + *export_names};
 
     if (const auto* exported_name =
             reinterpret_cast<const char*>(raw_exported_name);
         hash_comparator(exported_name, fn_hash)) {
-      const auto* ordinals_low_part{
-          reinterpret_cast<const WORD*>(name_ordinals)};
       const auto* entry_ptr{reinterpret_cast<const DWORD*>(
-          functions + *ordinals_low_part * sizeof(DWORD))};
-
-      print_addr(exported_name);
-      print_addr((void*)*ordinals_low_part);
+          functions + *name_ordinals * sizeof(DWORD))};
 
       return reinterpret_cast<FnPtrTy>(image_base_byte_addr + *entry_ptr);
     }
+
+    ++export_names;
+    ++name_ordinals;
   }
   return nullptr;
 }
@@ -167,17 +162,16 @@ void ReloadImage(void* new_base,
                  const void* image_base,
                  const IMAGE_NT_HEADERS& nt_header) {
   const auto* image_base_byte_addr{static_cast<const std::byte*>(image_base)};
-  print_addr(new_base);
 
   const auto& optional_header{nt_header.OptionalHeader};
   CopyMem(new_base, image_base, optional_header.SizeOfHeaders);
 
   const auto& file_header{nt_header.FileHeader};
-  const auto* section_entry{
-      reinterpret_cast<const IMAGE_SECTION_HEADER*>(&optional_header) +
+  const auto* raw_section_entry{
+      reinterpret_cast<const std::byte*>(&optional_header) +
       file_header.SizeOfOptionalHeader};
-
-  __debugbreak();
+  const auto* section_entry{
+      reinterpret_cast<const IMAGE_SECTION_HEADER*>(raw_section_entry)};
 
   for (size_t idx = 0; idx < file_header.NumberOfSections;
        ++idx, ++section_entry) {
@@ -312,11 +306,11 @@ DLLEXPORT DWORD WINAPI ReflectiveLoader(void* parameter) {
   const auto [kernel32, ntdll]{details::GetBasicFunctionSet(peb)};
 
   const auto* nt_header{details::GetNtHeader(image_base)};
-  __debugbreak();
   void* new_base{
       kernel32.virtual_alloc(nullptr, nt_header->OptionalHeader.SizeOfImage,
                              MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE)};
   details::ReloadImage(new_base, image_base, *nt_header);
+
   // details::ResolveImports(new_base, *nt_header, kernel32.load_library,
   //                        kernel32.get_proc_addr);
   // details::RelocateIfNeeded(new_base, *nt_header);

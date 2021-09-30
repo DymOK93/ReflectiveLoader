@@ -126,7 +126,7 @@ optional<int32_t> TryFindExportedEntry(const void* image_base,
       image_base_byte_addr +
       details::ConvertRvaToOffset(export_dir->AddressOfNames, image_base))};
 
-  const auto* name_ordinals{reinterpret_cast<const DWORD*>(
+  const auto* name_ordinals{reinterpret_cast<const WORD*>(
       image_base_byte_addr +
       details::ConvertRvaToOffset(export_dir->AddressOfNameOrdinals,
                                   image_base))};
@@ -144,13 +144,13 @@ optional<int32_t> TryFindExportedEntry(const void* image_base,
     if (const string_view exported_name_view =
             reinterpret_cast<const char*>(raw_exported_name);
         exported_name_view.find(entry_name) != string_view::npos) {
-      const auto* ordinals_low_part{
-          reinterpret_cast<const WORD*>(name_ordinals)};
       const auto* entry_ptr{reinterpret_cast<const DWORD*>(
-          functions + *ordinals_low_part * sizeof(DWORD))};
+          functions + *name_ordinals * sizeof(DWORD))};
 
       return details::ConvertRvaToOffset(*entry_ptr, image_base);
     }
+    ++export_names;
+    ++name_ordinals;
   }
   return nullopt;
 }
