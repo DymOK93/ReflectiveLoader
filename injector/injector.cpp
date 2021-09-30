@@ -16,7 +16,7 @@ CMRC_DECLARE(dll_payload);
 int main(int argc, char* argv[]) {
   if (argc < 2) {
     cout << "Usage: ReflectiveInjector <process_id>\n";
-    return EXIT_FAILURE;
+    // return EXIT_FAILURE;
   }
   try {
     const auto resource_fs{cmrc::dll_payload::get_filesystem()};
@@ -24,11 +24,12 @@ int main(int argc, char* argv[]) {
 
     winapi::PrivilegeManager::GetInstance().GetPrivileges(SE_DEBUG_NAME);
 
-    const auto target_pid{stoul(argv[1])};
-    const auto target{OpenProcessById(
+    // const auto target_pid{stoul(argv[1])};
+    const auto target{/*OpenProcessById(
         target_pid, PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION |
                         PROCESS_VM_OPERATION | PROCESS_VM_WRITE |
-                        PROCESS_VM_READ)};
+                        PROCESS_VM_READ)*/
+                      wil::unique_handle{GetCurrentProcess()}};
 
     const auto payload_begin{
         reinterpret_cast<const std::byte*>(begin(payload))};

@@ -1,4 +1,5 @@
 #include "loader.hpp"
+#include "hash.hpp"
 
 #include <intrin.h>
 
@@ -73,29 +74,14 @@ static const void* LocateImageBase() {
   }
 }
 
-template <size_t N>
-bool IsEqualUnicodeStr(const UNICODE_STRING& str,
-                       const wchar_t (&expected)[N]) {
-  const size_t length_in_bytes{(N - 1) * sizeof(wchar_t)};
-  if (length_in_bytes != str.Length) {
-    return false;
-  }
-  return CompareMem(str.Buffer, expected, length_in_bytes) == 0;
+template <class Ty>
+NOINLINE Ty* print_addr(Ty* ptr) {
+  __debugbreak();
+  return ptr;
 }
 
-template <size_t N>
-bool IsEqualCStr(const char* str, const char (&expected)[N]) {
-  size_t idx{0};
-  for (; idx + 1 < N && str[idx]; ++idx) {
-    if (str[idx] != expected[idx]) {
-      return false;
-    }
-  }
-  return idx + 1 == N;
-}
-
-template <class FnPtrTy, size_t N>
-FnPtrTy LoadProcAddress(const void* image_base, const char (&fn_name)[N]) {
+template <class FnPtrTy>
+FnPtrTy LoadProcAddressByHash(const void* image_base, uint32_t fn_hash) {
   const auto* image_base_byte_addr{static_cast<const std::byte*>(image_base)};
   const auto* nt_header{GetNtHeader(image_base)};
 
@@ -117,48 +103,65 @@ FnPtrTy LoadProcAddress(const void* image_base, const char (&fn_name)[N]) {
        ++idx, ++export_names, ++name_ordinals) {
     const auto* raw_exported_name{image_base_byte_addr + *export_names};
 
+    constexpr auto hash_comparator{[](const char* target, uint32_t expected) {
+      const auto result{Hash<const char*>{}(target)};
+      return result == expected;
+    }};
+
     if (const auto* exported_name =
             reinterpret_cast<const char*>(raw_exported_name);
-        IsEqualCStr(exported_name, fn_name)) {
+        hash_comparator(exported_name, fn_hash)) {
       const auto* functions{image_base_byte_addr +
                             export_dir->AddressOfFunctions};
+      const auto* ordinals_low_part{
+          reinterpret_cast<const WORD*>(name_ordinals)};
       const auto* entry_ptr{reinterpret_cast<const DWORD*>(
-          functions + LOWORD(name_ordinals) * sizeof(DWORD))};
+          functions + *ordinals_low_part * sizeof(DWORD))};
 
       return reinterpret_cast<FnPtrTy>(image_base_byte_addr + *entry_ptr);
     }
   }
+  print_addr((void*)fn_hash);
   return nullptr;
 }
 
 Kernel32 FillKernel32Imports(const LDR_DATA_TABLE_ENTRY& dll) {
   return {
-      LoadProcAddress<Kernel32::load_library_t>(dll.DllBase, "LoadLibraryA"),
-      LoadProcAddress<Kernel32::get_proc_addr_t>(dll.DllBase, "GetProcAddress"),
-      LoadProcAddress<Kernel32::virtual_alloc_t>(dll.DllBase, "VirtualAlloc"),
+      LoadProcAddressByHash<Kernel32::load_library_t>(dll.DllBase,
+                                                      hash::LOAD_LIBRARY),
+      LoadProcAddressByHash<Kernel32::get_proc_addr_t>(dll.DllBase,
+                                                       hash::GET_PROC_ADDRESS),
+      LoadProcAddressByHash<Kernel32::virtual_alloc_t>(dll.DllBase,
+                                                       hash::VIRTUAL_ALLOC),
   };
 }
 
 NtDll FillNtDllImports(const LDR_DATA_TABLE_ENTRY& dll) {
-  return {LoadProcAddress<NtDll::nt_flush_icache_t>(dll.DllBase,
-                                                    "NtFlushInstructionCache")};
+  return {LoadProcAddressByHash<NtDll::nt_flush_icache_t>(
+      dll.DllBase, hash::NT_FLUSH_ICACHE)};
 }
 
 BasicFunctionSet GetBasicFunctionSet(PPEB peb) {
   BasicFunctionSet basic_set{};
 
   const auto* peb_ldr_data{peb->pLdr};
-
   const auto& module_list{peb_ldr_data->InMemoryOrderModuleList};
+
   for (const auto* entry = module_list.Flink; entry != &module_list;
        entry = entry->Flink) {
-    const auto* dynamic_library{
-        reinterpret_cast<const LDR_DATA_TABLE_ENTRY*>(entry)};
+    const auto* dynamic_library{CONTAINING_RECORD(entry, LDR_DATA_TABLE_ENTRY,
+                                                  InMemoryOrderModuleList)};
+    constexpr auto hash_comparator{
+        [](const UNICODE_STRING& target, uint32_t expected) {
+          const auto result{
+              Hash<UNICODE_STRING>{}(target, hash::case_insensitive_tag{})};
+          return result == expected;
+        }};
 
     if (const UNICODE_STRING& base_dll_name = dynamic_library->BaseDllName;
-        IsEqualUnicodeStr(base_dll_name, L"kernel32.dll")) {
+        hash_comparator(base_dll_name, hash::KERNEL32_DLL)) {
       basic_set.kernel32 = FillKernel32Imports(*dynamic_library);
-    } else if (IsEqualUnicodeStr(base_dll_name, L"ntdll.dll")) {
+    } else if (hash_comparator(base_dll_name, hash::NTDLL_DLL)) {
       basic_set.ntdll = FillNtDllImports(*dynamic_library);
     }
   }
@@ -307,12 +310,14 @@ DLLEXPORT DWORD WINAPI ReflectiveLoader(void* parameter) {
   const auto* image_base{details::LocateImageBase()};
 
   const PPEB peb{details::GetProcessEnvironmentBlock()};
+
   const auto [kernel32, ntdll]{details::GetBasicFunctionSet(peb)};
 
   const auto* nt_header{details::GetNtHeader(image_base)};
-  void* new_base{
+  /*void* new_base{
       kernel32.virtual_alloc(nullptr, nt_header->OptionalHeader.SizeOfImage,
-                             MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE)};
+                             MEM_RESERVE | MEM_COMMIT,
+  PAGE_EXECUTE_READWRITE)};*/
   // details::ReloadImage(new_base, image_base, *nt_header);
   // details::ResolveImports(new_base, *nt_header, kernel32.load_library,
   //                        kernel32.get_proc_addr);
