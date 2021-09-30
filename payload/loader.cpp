@@ -1,5 +1,6 @@
 #include "loader.hpp"
 #include "hash.hpp"
+#include "typedefs.hpp"
 
 #include <intrin.h>
 
@@ -99,18 +100,18 @@ FnPtrTy LoadProcAddressByHash(const void* image_base, uint32_t fn_hash) {
   const auto* name_ordinals{reinterpret_cast<const DWORD*>(
       image_base_byte_addr + export_dir->AddressOfNameOrdinals)};
 
+  constexpr auto hash_comparator{[](const char* target, uint32_t expected) {
+    const uint32_t result{Hash<const char*>{}(target)};
+    return result == expected;
+  }};
+
   for (size_t idx = 0; idx < export_dir->NumberOfNames;
        ++idx, ++export_names, ++name_ordinals) {
     const auto* raw_exported_name{image_base_byte_addr + *export_names};
 
-    constexpr auto hash_comparator{[](const char* target, uint32_t expected) {
-      const auto result{Hash<const char*>{}(target)};
-      return result == expected;
-    }};
-
-    if (const auto* exported_name =
+    if (const auto* exported_name_view =
             reinterpret_cast<const char*>(raw_exported_name);
-        hash_comparator(exported_name, fn_hash)) {
+        hash_comparator(exported_name_view, fn_hash)) {
       const auto* functions{image_base_byte_addr +
                             export_dir->AddressOfFunctions};
       const auto* ordinals_low_part{
@@ -121,24 +122,7 @@ FnPtrTy LoadProcAddressByHash(const void* image_base, uint32_t fn_hash) {
       return reinterpret_cast<FnPtrTy>(image_base_byte_addr + *entry_ptr);
     }
   }
-  print_addr((void*)fn_hash);
   return nullptr;
-}
-
-Kernel32 FillKernel32Imports(const LDR_DATA_TABLE_ENTRY& dll) {
-  return {
-      LoadProcAddressByHash<Kernel32::load_library_t>(dll.DllBase,
-                                                      hash::LOAD_LIBRARY),
-      LoadProcAddressByHash<Kernel32::get_proc_addr_t>(dll.DllBase,
-                                                       hash::GET_PROC_ADDRESS),
-      LoadProcAddressByHash<Kernel32::virtual_alloc_t>(dll.DllBase,
-                                                       hash::VIRTUAL_ALLOC),
-  };
-}
-
-NtDll FillNtDllImports(const LDR_DATA_TABLE_ENTRY& dll) {
-  return {LoadProcAddressByHash<NtDll::nt_flush_icache_t>(
-      dll.DllBase, hash::NT_FLUSH_ICACHE)};
 }
 
 BasicFunctionSet GetBasicFunctionSet(PPEB peb) {
@@ -153,16 +137,25 @@ BasicFunctionSet GetBasicFunctionSet(PPEB peb) {
                                                   InMemoryOrderModuleList)};
     constexpr auto hash_comparator{
         [](const UNICODE_STRING& target, uint32_t expected) {
-          const auto result{
+          const uint32_t result{
               Hash<UNICODE_STRING>{}(target, hash::case_insensitive_tag{})};
           return result == expected;
         }};
 
     if (const UNICODE_STRING& base_dll_name = dynamic_library->BaseDllName;
-        hash_comparator(base_dll_name, hash::KERNEL32_DLL)) {
-      basic_set.kernel32 = FillKernel32Imports(*dynamic_library);
-    } else if (hash_comparator(base_dll_name, hash::NTDLL_DLL)) {
-      basic_set.ntdll = FillNtDllImports(*dynamic_library);
+        hash_comparator(base_dll_name, hash::NTDLL_DLL)) {
+      basic_set.ntdll = {LoadProcAddressByHash<NtDll::nt_flush_icache_t>(
+          dynamic_library->DllBase, hash::NT_FLUSH_ICACHE)};
+
+    } else if (hash_comparator(base_dll_name, hash::KERNEL32_DLL)) {
+      basic_set.kernel32 = {
+          LoadProcAddressByHash<Kernel32::load_library_t>(
+              dynamic_library->DllBase, hash::LOAD_LIBRARY),
+          LoadProcAddressByHash<Kernel32::get_proc_addr_t>(
+              dynamic_library->DllBase, hash::GET_PROC_ADDRESS),
+          LoadProcAddressByHash<Kernel32::virtual_alloc_t>(
+              dynamic_library->DllBase, hash::VIRTUAL_ALLOC),
+      };
     }
   }
   return basic_set;
@@ -314,11 +307,11 @@ DLLEXPORT DWORD WINAPI ReflectiveLoader(void* parameter) {
   const auto [kernel32, ntdll]{details::GetBasicFunctionSet(peb)};
 
   const auto* nt_header{details::GetNtHeader(image_base)};
-  /*void* new_base{
+  void* new_base{
       kernel32.virtual_alloc(nullptr, nt_header->OptionalHeader.SizeOfImage,
                              MEM_RESERVE | MEM_COMMIT,
-  PAGE_EXECUTE_READWRITE)};*/
-  // details::ReloadImage(new_base, image_base, *nt_header);
+  PAGE_EXECUTE_READWRITE)};
+  details::ReloadImage(new_base, image_base, *nt_header);
   // details::ResolveImports(new_base, *nt_header, kernel32.load_library,
   //                        kernel32.get_proc_addr);
   // details::RelocateIfNeeded(new_base, *nt_header);

@@ -1,4 +1,6 @@
 #pragma once
+#include "typedefs.hpp"
+
 #include <intrin.h>
 #include <cstdint>
 
@@ -6,10 +8,10 @@ namespace hash {
 inline constexpr uint32_t KERNEL32_DLL{0x6A4ABC5B};
 inline constexpr uint32_t NTDLL_DLL{0x3CFA685D};
 
-inline constexpr uint32_t LOAD_LIBRARY{0xEC0E4E8E};
-inline constexpr uint32_t GET_PROC_ADDRESS{0x7C0DFCAA};
-inline constexpr uint32_t VIRTUAL_ALLOC{0x91AFCA54};
-inline constexpr uint32_t NT_FLUSH_ICACHE{0x534C0AB8};
+inline constexpr uint32_t LOAD_LIBRARY{0xE82F3D05};
+inline constexpr uint32_t GET_PROC_ADDRESS{0x3C68C78D};
+inline constexpr uint32_t VIRTUAL_ALLOC{0x86BC30D7};
+inline constexpr uint32_t NT_FLUSH_ICACHE{0x49424A60};
 
 inline constexpr uint32_t KEY{13};
 

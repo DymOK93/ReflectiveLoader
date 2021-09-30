@@ -9,6 +9,8 @@
 
 #include <windows.h>
 
+#include "../payload/hash.hpp"
+
 using namespace std;
 
 CMRC_DECLARE(dll_payload);
