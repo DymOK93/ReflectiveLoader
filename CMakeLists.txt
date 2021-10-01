@@ -12,7 +12,7 @@ set(
 	BASIC_COMPILE_OPTIONS
 		/MP	# Multiprocessor compilation
 		/W4 # Warnings level
-		#/WX # Treat warnings as errors
+		/WX # Treat warnings as errors
 )
 set(
 	RELEASE_COMPILE_OPTIONS

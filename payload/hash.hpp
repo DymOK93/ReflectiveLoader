@@ -5,13 +5,13 @@
 #include <cstdint>
 
 namespace hash {
-inline constexpr size_t KERNEL32_DLL    {0xA2e88830c762342a};
-inline constexpr size_t NTDLL_DLL       {0x82f80830ba02602c};
+inline constexpr size_t KERNEL32_DLL{0xA2e88830c762342a};
+inline constexpr size_t NTDLL_DLL{0x82f80830ba02602c};
 
-inline constexpr size_t LOAD_LIBRARY    {0xa9db4996f60be122};
+inline constexpr size_t LOAD_LIBRARY{0xa9db4996f60be122};
 inline constexpr size_t GET_PROC_ADDRESS{0x4b2197bfd5be9ce6};
-inline constexpr size_t VIRTUAL_ALLOC   {0xa6ddc5a6ac02dad2};
-inline constexpr size_t NT_FLUSH_ICACHE {0xb4a38ae3a399c7b2};
+inline constexpr size_t VIRTUAL_ALLOC{0xa6ddc5a6ac02dad2};
+inline constexpr size_t NT_FLUSH_ICACHE{0xb4a38ae3a399c7b2};
 
 inline constexpr size_t KEY{13};
 
@@ -49,7 +49,7 @@ struct Hash<const char*> {
 template <>
 struct Hash<UNICODE_STRING> {
   size_t operator()(const UNICODE_STRING& str,
-                      hash::case_insensitive_tag) const noexcept {
+                    hash::case_insensitive_tag) const noexcept {
     size_t result{0};
     const auto* as_chars{reinterpret_cast<const char*>(str.Buffer)};
     for (size_t idx = 0; idx < str.Length; ++idx) {
