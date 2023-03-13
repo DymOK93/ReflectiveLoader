@@ -232,50 +232,53 @@ void RelocateIfNeeded(void* reloaded_image_base,
       image_base_byte_addr -
       reinterpret_cast<const std::byte*>(nt_header.OptionalHeader.ImageBase)};
 
-  if (const auto* relocation_data_dir = nt_header.OptionalHeader.DataDirectory +
-                                        IMAGE_DIRECTORY_ENTRY_BASERELOC;
-      relocation_data_dir->Size > 0) {
-    const auto* relocation_block{reinterpret_cast<const IMAGE_BASE_RELOCATION*>(
-        image_base_byte_addr + relocation_data_dir->VirtualAddress)};
+  const auto* relocation_data_dir =
+      nt_header.OptionalHeader.DataDirectory + IMAGE_DIRECTORY_ENTRY_BASERELOC;
 
-    while (relocation_block->SizeOfBlock) {
-      auto* relocation_target{image_base_byte_addr +
-                              relocation_block->VirtualAddress};
+  if (!relocation_data_dir) {
+    return;
+  }
 
-      size_t entry_count{relocation_block->SizeOfBlock -
-                         sizeof(IMAGE_BASE_RELOCATION) / sizeof(IMAGE_RELOC)};
+  const auto* relocation_block{reinterpret_cast<const IMAGE_BASE_RELOCATION*>(
+      image_base_byte_addr + relocation_data_dir->VirtualAddress)};
 
-      const auto* raw_relocation_block{
-          reinterpret_cast<const std::byte*>(relocation_block)};
-      const auto* relocation_entry{reinterpret_cast<const IMAGE_RELOC*>(
-          raw_relocation_block + sizeof(IMAGE_BASE_RELOCATION))};
+  while (relocation_block->SizeOfBlock) {
+    auto* relocation_target{image_base_byte_addr +
+                            relocation_block->VirtualAddress};
 
-      while (entry_count--) {
-        if (relocation_entry->type == IMAGE_REL_BASED_DIR64) {
-          auto* cell{reinterpret_cast<ULONG_PTR*>(relocation_target +
-                                                  relocation_entry->offset)};
-          *cell += relocation_delta;
-        } else if (relocation_entry->type == IMAGE_REL_BASED_HIGHLOW) {
-          auto* cell{reinterpret_cast<DWORD*>(relocation_target +
-                                              relocation_entry->offset)};
-          *cell += static_cast<DWORD>(relocation_delta);
+    size_t entry_count{(relocation_block->SizeOfBlock -
+                        sizeof(IMAGE_BASE_RELOCATION)) / sizeof(IMAGE_RELOC)};
 
-        } else if (relocation_entry->type == IMAGE_REL_BASED_HIGH) {
-          auto* cell{reinterpret_cast<WORD*>(relocation_target +
-                                             relocation_entry->offset)};
-          *cell += HIWORD(relocation_delta);
-        } else if (relocation_entry->type == IMAGE_REL_BASED_LOW) {
-          auto* cell{reinterpret_cast<WORD*>(relocation_target +
-                                             relocation_entry->offset)};
-          *cell += LOWORD(relocation_delta);
-        }
-        ++relocation_entry;
+    const auto* raw_relocation_block{
+        reinterpret_cast<const std::byte*>(relocation_block)};
+    const auto* relocation_entry{reinterpret_cast<const IMAGE_RELOC*>(
+        raw_relocation_block + sizeof(IMAGE_BASE_RELOCATION))};
+
+    while (entry_count--) {
+      if (relocation_entry->type == IMAGE_REL_BASED_DIR64) {
+        auto* cell{reinterpret_cast<ULONG_PTR*>(relocation_target +
+                                                relocation_entry->offset)};
+        *cell += relocation_delta;
+      } else if (relocation_entry->type == IMAGE_REL_BASED_HIGHLOW) {
+        auto* cell{reinterpret_cast<DWORD*>(relocation_target +
+                                            relocation_entry->offset)};
+        *cell += static_cast<DWORD>(relocation_delta);
+
+      } else if (relocation_entry->type == IMAGE_REL_BASED_HIGH) {
+        auto* cell{reinterpret_cast<WORD*>(relocation_target +
+                                            relocation_entry->offset)};
+        *cell += HIWORD(relocation_delta);
+      } else if (relocation_entry->type == IMAGE_REL_BASED_LOW) {
+        auto* cell{reinterpret_cast<WORD*>(relocation_target +
+                                            relocation_entry->offset)};
+        *cell += LOWORD(relocation_delta);
       }
-
-      raw_relocation_block += relocation_block->SizeOfBlock;
-      relocation_block =
-          reinterpret_cast<const IMAGE_BASE_RELOCATION*>(raw_relocation_block);
+      ++relocation_entry;
     }
+
+    raw_relocation_block += relocation_block->SizeOfBlock;
+    relocation_block =
+        reinterpret_cast<const IMAGE_BASE_RELOCATION*>(raw_relocation_block);
   }
 }
 }  // namespace details
