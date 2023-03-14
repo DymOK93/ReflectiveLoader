@@ -235,7 +235,7 @@ void RelocateIfNeeded(void* reloaded_image_base,
   const auto* relocation_data_dir =
       nt_header.OptionalHeader.DataDirectory + IMAGE_DIRECTORY_ENTRY_BASERELOC;
 
-  if (!relocation_data_dir) {
+  if (!relocation_data_dir->Size) {
     return;
   }
 
